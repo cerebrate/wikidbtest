@@ -18,9 +18,9 @@ using Microsoft.Isam.Esent;
 using Microsoft.Isam.Esent.Interop;
 using Microsoft.Isam.Esent.Interop.Windows8;
 
-namespace ArkaneSystems.ModernWiki.Database
+namespace WikiDbTest
 {
-    public sealed class WikiDbTest : IDisposable
+    public sealed class WikiDatabase : IDisposable
     {
         private bool disposed;
 

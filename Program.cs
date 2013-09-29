@@ -10,6 +10,13 @@ namespace WikiDbTest
     {
         static void Main (string[] args)
         {
+            // See the database opened or created.
+            WikiDatabase wb = WikiDatabase.Instance;
+
+
+
+            // Close down the database.
+            wb.Dispose();
         }
     }
 }
