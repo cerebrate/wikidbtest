@@ -12,9 +12,9 @@
 #endregion
 
 using System;
-using Microsoft.Isam.Esent;
+using System.Collections.Generic;
+
 using Microsoft.Isam.Esent.Interop;
-using Microsoft.Isam.Esent.Interop.Windows8;
 using System.Reflection;
 using System.IO;
 
@@ -41,10 +41,12 @@ namespace WikiDbTest
         /// </summary>
         public static WikiDatabase Instance
         {
-            get { return WikiDatabase.Lazy.Value; }
+            get { return Lazy.Value; }
         }
 
         #endregion
+
+        #region Constructor: create and/or open the database
 
         /// <summary>
         ///     Construct the WikiDatabase instance; create the database file, and make any internal
@@ -82,9 +84,60 @@ namespace WikiDbTest
             if (File.Exists (databasePath))
             {
                 // There is such a file, therefore we open/attach the database.
+                Api.JetAttachDatabase2 (this.session, databasePath, 0, AttachDatabaseGrbit.None);
+                Api.JetOpenDatabase (this.session, databasePath, null, out this.database, OpenDatabaseGrbit.None);
 
-                // not handling this for now
-                throw new NotImplementedException();
+                // Open the wikis table.
+                Api.JetOpenTable (this.session,
+                                  this.database,
+                                  "wikis",
+                                  null,
+                                  0,
+                                  OpenTableGrbit.Updatable,
+                                  out this.wikisTable);
+
+                // Load the columnids.
+                IDictionary<string, JET_COLUMNID> columnids = Api.GetColumnDictionary (this.session, this.wikisTable);
+
+                this.wikis_id = columnids["id"];
+                this.wikis_name = columnids["name"];
+                this.wikis_description = columnids["description"];
+
+                // Open the wikiPages table.
+                Api.JetOpenTable (this.session,
+                                  this.database,
+                                  "wikiPages",
+                                  null,
+                                  0,
+                                  OpenTableGrbit.Updatable | OpenTableGrbit.Sequential,
+                                  out this.wikiPagesTable);
+
+                // Load the columnids.
+                columnids = Api.GetColumnDictionary (this.session, this.wikiPagesTable);
+
+                this.wikipages_id = columnids["id"];
+                this.wikipages_wikiName = columnids["wikiName"];
+                this.wikipages_pageName = columnids["pageName"];
+                this.wikipages_pageClass = columnids["pageClass"];
+                this.wikipages_pageContents = columnids["pageContents"];
+                this.wikipages_lastUpdated = columnids["lastUpdated"];
+
+                // Open the backlinks table.
+                Api.JetOpenTable (this.session,
+                                  this.database,
+                                  "backlinks",
+                                  null,
+                                  0,
+                                  OpenTableGrbit.Updatable | OpenTableGrbit.Sequential,
+                                  out this.backlinksTable);
+
+                // Load the columnids.
+                columnids = Api.GetColumnDictionary (this.session, this.backlinksTable);
+
+                this.backlinks_id = columnids["id"];
+                this.backlinks_pageId = columnids["pageId"];
+                this.backlinks_wikiName = columnids["wikiName"];
+                this.backlinks_pageName = columnids["pageName"];
             }
             else
             {
@@ -97,14 +150,13 @@ namespace WikiDbTest
                 Api.JetCreateTable(this.session, this.database, "wikis", 0, 100, out this.wikisTable);
                 
                 // Columns
-                JET_COLUMNDEF coldef;
 
                 // id
-                coldef = new JET_COLUMNDEF
-                         {
-                             coltyp = JET_coltyp.Long,
-                             grbit = ColumndefGrbit.ColumnAutoincrement
-                         };
+                var coldef = new JET_COLUMNDEF
+                                       {
+                                           coltyp = JET_coltyp.Long,
+                                           grbit = ColumndefGrbit.ColumnAutoincrement
+                                       };
                 Api.JetAddColumn(this.session, this.wikisTable, "id", coldef, null, 0, out this.wikis_id);
 
                 // name
@@ -127,14 +179,13 @@ namespace WikiDbTest
 
                 // Indices.
                 // name
-                JET_INDEXCREATE indexcreate;
-                indexcreate = new JET_INDEXCREATE
-                                 {
-                                     szIndexName = "byName",
-                                     szKey = "+name\0",
-                                     cbKey = "+name\0".Length + 1,
-                                     grbit = CreateIndexGrbit.IndexPrimary | CreateIndexGrbit.IndexUnique | CreateIndexGrbit.IndexDisallowNull,
-                                 };
+                var indexcreate = new JET_INDEXCREATE
+                                              {
+                                                  szIndexName = "byName",
+                                                  szKey = "+name\0",
+                                                  cbKey = "+name\0".Length + 1,
+                                                  grbit = CreateIndexGrbit.IndexPrimary | CreateIndexGrbit.IndexUnique | CreateIndexGrbit.IndexDisallowNull,
+                                              };
                 Api.JetCreateIndex2(this.session, this.wikisTable, new [] { indexcreate }, 1);
 
                 // Create the wikiPages table.
@@ -287,29 +338,31 @@ namespace WikiDbTest
             }
         }
 
-        private JET_INSTANCE instance;
-        private JET_SESID session;
-        private JET_DBID database;
+        #endregion
 
-        private JET_TABLEID wikisTable;
-        private JET_TABLEID wikiPagesTable;
-        private JET_TABLEID backlinksTable;
+        private readonly JET_INSTANCE instance;
+        private readonly JET_SESID session;
+        private readonly JET_DBID database;
 
-        private JET_COLUMNID wikis_id;
-        private JET_COLUMNID wikis_name;
-        private JET_COLUMNID wikis_description;
-        
-        private JET_COLUMNID wikipages_id;
-        private JET_COLUMNID wikipages_wikiName;
-        private JET_COLUMNID wikipages_pageName;
-        private JET_COLUMNID wikipages_pageClass;
-        private JET_COLUMNID wikipages_pageContents;
-        private JET_COLUMNID wikipages_lastUpdated;
+        private readonly JET_TABLEID wikisTable;
+        private readonly JET_TABLEID wikiPagesTable;
+        private readonly JET_TABLEID backlinksTable;
 
-        private JET_COLUMNID backlinks_id;
-        private JET_COLUMNID backlinks_pageId;
-        private JET_COLUMNID backlinks_wikiName;
-        private JET_COLUMNID backlinks_pageName;
+        private readonly JET_COLUMNID wikis_id;
+        private readonly JET_COLUMNID wikis_name;
+        private readonly JET_COLUMNID wikis_description;
+
+        private readonly JET_COLUMNID wikipages_id;
+        private readonly JET_COLUMNID wikipages_wikiName;
+        private readonly JET_COLUMNID wikipages_pageName;
+        private readonly JET_COLUMNID wikipages_pageClass;
+        private readonly JET_COLUMNID wikipages_pageContents;
+        private readonly JET_COLUMNID wikipages_lastUpdated;
+
+        private readonly JET_COLUMNID backlinks_id;
+        private readonly JET_COLUMNID backlinks_pageId;
+        private readonly JET_COLUMNID backlinks_wikiName;
+        private readonly JET_COLUMNID backlinks_pageName;
 
         #region IDisposable Members
 
