@@ -13,7 +13,9 @@ namespace WikiDbTest
             // See the database opened or created.
             WikiDatabase wb = WikiDatabase.Instance;
 
-
+            // Pause.
+            Console.WriteLine ("Pausing...");
+            Console.ReadLine ();
 
             // Close down the database.
             wb.Dispose();
