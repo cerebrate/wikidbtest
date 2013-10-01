@@ -13,7 +13,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Net.NetworkInformation;
+using System.Text;
 
 using Microsoft.Isam.Esent.Interop;
 using System.Reflection;
@@ -169,10 +169,20 @@ namespace WikiDbTest
                 var indexcreate = new JET_INDEXCREATE
                                               {
                                                   szIndexName = "byName",
-                                                  szKey = "+name\0",
-                                                  cbKey = "+name\0".Length + 1,
+                                                  szKey = "+name\0\0",
+                                                  cbKey = "+name\0\0".Length,
                                                   grbit = CreateIndexGrbit.IndexPrimary | CreateIndexGrbit.IndexUnique | CreateIndexGrbit.IndexDisallowNull,
                                               };
+                Api.JetCreateIndex2(this.session, wikisTable, new [] { indexcreate }, 1);
+
+                // id
+                indexcreate = new JET_INDEXCREATE
+                              {
+                                szIndexName = "byId",
+                                szKey = "+id\0\0",
+                                cbKey = "+id\0\0".Length,
+                                grbit = CreateIndexGrbit.None
+                              };
                 Api.JetCreateIndex2(this.session, wikisTable, new [] { indexcreate }, 1);
 
                 // Create the wikiPages table.
@@ -236,9 +246,18 @@ namespace WikiDbTest
                 indexcreate = new JET_INDEXCREATE
                 {
                     szIndexName = "byWikiAndPage",
-                    szKey = "+wiki\0+pageName\0",
-                    cbKey = "+wiki\0+pageName\0".Length + 1,
+                    szKey = "+wiki\0+pageName\0\0",
+                    cbKey = "+wiki\0+pageName\0\0".Length,
                     grbit = CreateIndexGrbit.IndexPrimary | CreateIndexGrbit.IndexUnique | CreateIndexGrbit.IndexDisallowNull
+                };
+                Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
+
+                indexcreate = new JET_INDEXCREATE
+                {
+                    szIndexName = "byId",
+                    szKey = "+id\0\0",
+                    cbKey = "+id\0\0".Length,
+                    grbit = CreateIndexGrbit.None
                 };
                 Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
 
@@ -246,18 +265,18 @@ namespace WikiDbTest
                 indexcreate = new JET_INDEXCREATE
                 {
                     szIndexName = "byLastUpdated",
-                    szKey = "-lastUpdated\0",
-                    cbKey = "-lastUpdated\0".Length + 1,
+                    szKey = "-lastUpdated\0\0",
+                    cbKey = "-lastUpdated\0\0".Length,
                     grbit = CreateIndexGrbit.None
                 };
                 Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
 
-                // for full-test sear: pageContents
+                // for full-test search: pageContents
                 indexcreate = new JET_INDEXCREATE
                 {
                     szIndexName = "byContents",
-                    szKey = "+pageContents\0",
-                    cbKey = "+pageContents\0".Length + 1,
+                    szKey = "+pageContents\0\0",
+                    cbKey = "+pageContents\0\0".Length,
                     grbit = CreateIndexGrbit.None
                 };
                 Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
@@ -296,25 +315,140 @@ namespace WikiDbTest
         // Enumerate the wikis currently in the database.
         public IEnumerable<Wiki> GetWikis ()
         {
-            throw new NotImplementedException();
+            lock (this.nonReentrancyLock)
+            {
+                List<Wiki> returnValue = new List<Wiki> ();
+
+                using (var table = new Table (this.session, this.database, "wikis", OpenTableGrbit.ReadOnly))
+                {
+                    // Be on the primary index, which indexes the name column.
+                    Api.JetSetCurrentIndex(this.session, table, null);
+
+                    if (Api.TryMoveFirst (this.session, table))
+                    {
+                        do
+                        {
+                            Wiki wiki = new Wiki();
+                            wiki.Id = (int) Api.RetrieveColumnAsInt32 (this.session, table, wikis_id); // can't be null
+                            wiki.Name = Api.RetrieveColumnAsString (this.session, table, wikis_name, Encoding.Unicode);
+                            wiki.Description = Api.RetrieveColumnAsString (this.session,
+                                                                           table,
+                                                                           wikis_description,
+                                                                           Encoding.Unicode);
+
+                            returnValue.Add(wiki);
+
+                        } while (Api.TryMoveNext(this.session, table));
+                    }
+                }
+
+                return returnValue.AsReadOnly ();
+            }
         }
 
         // Create a new wiki, which includes creating its first (front) page.
         public void CreateNewWiki (Wiki newWiki)
         {
-            throw new NotImplementedException();
+            lock (this.nonReentrancyLock)
+            {
+                using (var table = new Table (this.session, this.database, "wikis", OpenTableGrbit.Updatable))
+                {
+                    using (var transaction = new Transaction (this.session))
+                    {
+                        // Be on the primary index, which indexes the name column.
+                        Api.JetSetCurrentIndex(this.session, table, null);
+
+                        // Make and try to seek to a key.
+                        Api.MakeKey(this.session, table, newWiki.Name, Encoding.Unicode, MakeKeyGrbit.NewKey);
+                        bool found = Api.TrySeek (this.session, table, SeekGrbit.SeekEQ);
+
+                        if (found)
+                            throw new ApplicationException(String.Format("There is already a wiki {0} in the database.", newWiki.Name));
+
+                        // Having eliminated it already existing, we now make the wiki record.
+                        using (var update = new Update (this.session, table, JET_prep.Insert))
+                        {
+                            Api.SetColumn(this.session, table, this.wikis_name, newWiki.Name, Encoding.Unicode);
+                            Api.SetColumn(this.session, table, this.wikis_description, newWiki.Description, Encoding.Unicode);
+
+                            // Save the update.
+                            update.Save();
+                        }
+
+                        // TODO: make the first page.
+
+                        // Commit the transaction.
+                        transaction.Commit(CommitTransactionGrbit.None);
+                    }
+                }
+            }
         }
 
         // Rename a wiki.
         public void RenameWiki (Wiki newNameAndDescription)
         {
-            throw new NotImplementedException();
+            lock (this.nonReentrancyLock)
+            {
+                using (var table = new Table (this.session, this.database, "wikis", OpenTableGrbit.Updatable))
+                {
+                    using (var transaction = new Transaction (this.session))
+                    {
+                        // Switch to the id index.
+                        Api.JetSetCurrentIndex(this.session, table, "byId");
+
+                        // Find the record to alter.
+                        Api.MakeKey(this.session, table, newNameAndDescription.Id, MakeKeyGrbit.NewKey);
+                        bool found = Api.TrySeek (this.session, table, SeekGrbit.SeekEQ);
+
+                        if (!found)
+                            throw new ApplicationException(String.Format ("Wiki with id {0} was not found.", newNameAndDescription.Id));
+
+                        // Having found the wiki record, we now change its name and description.
+                        using (var update = new Update (this.session, table, JET_prep.Replace))
+                        {
+                            Api.SetColumn (this.session, table, this.wikis_name, newNameAndDescription.Name, Encoding.Unicode);
+                            Api.SetColumn (this.session, table, this.wikis_description, newNameAndDescription.Description, Encoding.Unicode);
+
+                            // Save the update.
+                            update.Save ();
+                        }
+
+                        // Commit the transaction.
+                        transaction.Commit(CommitTransactionGrbit.None);
+                    }
+                }
+            }
         }
 
-        // Delete a new wiki, including all of its pages.
+        // Delete a wiki, including all of its pages.
         public void DeleteWiki (int wikiId)
         {
-            throw new NotImplementedException();
+            lock (this.nonReentrancyLock)
+            {
+                using (var table = new Table (this.session, this.database, "wikis", OpenTableGrbit.Updatable))
+                {
+                    using (var transaction = new Transaction (this.session))
+                    {
+                        // Switch to the id index.
+                        Api.JetSetCurrentIndex(this.session, table, "byId");
+
+                        // Find the record to delete.
+                        Api.MakeKey(this.session, table, wikiId, MakeKeyGrbit.NewKey);
+                        bool found = Api.TrySeek (this.session, table, SeekGrbit.SeekEQ);
+
+                        if (!found)
+                            throw new ApplicationException (String.Format ("Wiki with id {0} was not found.", wikiId));
+
+                        // TODO: Having found the wiki record, we now delete all of its pages.
+
+                        // And then we delete the wiki record itself.
+                        Api.JetDelete (this.session, table);
+
+                        // Commit the transaction.
+                        transaction.Commit(CommitTransactionGrbit.None);
+                    }
+                }
+            }
         }
 
         // WIKI PAGES FUNCTIONS
@@ -323,6 +457,12 @@ namespace WikiDbTest
         public IEnumerable<WikiIndex> GetWikiIndex (int wikiId)
         {
             throw new NotImplementedException();
+        }
+
+        // Get wiki page count.
+        public int GetWikiPageCount (int wikiId)
+        {
+            throw new NotImplementedException();   
         }
 
         // Fetch a single wiki page.
