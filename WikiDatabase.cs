@@ -13,6 +13,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Net.NetworkInformation;
 
 using Microsoft.Isam.Esent.Interop;
 using System.Reflection;
@@ -80,6 +81,9 @@ namespace WikiDbTest
             Api.JetInit (ref this.instance);
             Api.JetBeginSession(this.instance, out this.session, null, null);
 
+            JET_TABLEID wikisTable;
+            JET_TABLEID wikiPagesTable;
+
             // Is there already an extant database file?
             if (File.Exists (databasePath))
             {
@@ -94,10 +98,10 @@ namespace WikiDbTest
                                   null,
                                   0,
                                   OpenTableGrbit.Updatable,
-                                  out this.wikisTable);
+                                  out wikisTable);
 
                 // Load the columnids.
-                IDictionary<string, JET_COLUMNID> columnids = Api.GetColumnDictionary (this.session, this.wikisTable);
+                IDictionary<string, JET_COLUMNID> columnids = Api.GetColumnDictionary (this.session, wikisTable);
 
                 this.wikis_id = columnids["id"];
                 this.wikis_name = columnids["name"];
@@ -110,34 +114,17 @@ namespace WikiDbTest
                                   null,
                                   0,
                                   OpenTableGrbit.Updatable | OpenTableGrbit.Sequential,
-                                  out this.wikiPagesTable);
+                                  out wikiPagesTable);
 
                 // Load the columnids.
-                columnids = Api.GetColumnDictionary (this.session, this.wikiPagesTable);
+                columnids = Api.GetColumnDictionary (this.session, wikiPagesTable);
 
                 this.wikipages_id = columnids["id"];
-                this.wikipages_wikiName = columnids["wikiName"];
+                this.wikipages_wiki = columnids["wiki"];
                 this.wikipages_pageName = columnids["pageName"];
                 this.wikipages_pageClass = columnids["pageClass"];
                 this.wikipages_pageContents = columnids["pageContents"];
                 this.wikipages_lastUpdated = columnids["lastUpdated"];
-
-                // Open the backlinks table.
-                Api.JetOpenTable (this.session,
-                                  this.database,
-                                  "backlinks",
-                                  null,
-                                  0,
-                                  OpenTableGrbit.Updatable | OpenTableGrbit.Sequential,
-                                  out this.backlinksTable);
-
-                // Load the columnids.
-                columnids = Api.GetColumnDictionary (this.session, this.backlinksTable);
-
-                this.backlinks_id = columnids["id"];
-                this.backlinks_pageId = columnids["pageId"];
-                this.backlinks_wikiName = columnids["wikiName"];
-                this.backlinks_pageName = columnids["pageName"];
             }
             else
             {
@@ -147,7 +134,7 @@ namespace WikiDbTest
                 Api.JetBeginTransaction (this.session);
 
                 // Create the wikis table.
-                Api.JetCreateTable(this.session, this.database, "wikis", 0, 100, out this.wikisTable);
+                Api.JetCreateTable(this.session, this.database, "wikis", 0, 100, out wikisTable);
                 
                 // Columns
 
@@ -157,7 +144,7 @@ namespace WikiDbTest
                                            coltyp = JET_coltyp.Long,
                                            grbit = ColumndefGrbit.ColumnAutoincrement
                                        };
-                Api.JetAddColumn(this.session, this.wikisTable, "id", coldef, null, 0, out this.wikis_id);
+                Api.JetAddColumn(this.session, wikisTable, "id", coldef, null, 0, out this.wikis_id);
 
                 // name
                 coldef = new JET_COLUMNDEF
@@ -166,7 +153,7 @@ namespace WikiDbTest
                     grbit = ColumndefGrbit.ColumnNotNULL,
                     cp = JET_CP.Unicode
                 };
-                Api.JetAddColumn (this.session, this.wikisTable, "name", coldef, null, 0, out this.wikis_name);
+                Api.JetAddColumn (this.session, wikisTable, "name", coldef, null, 0, out this.wikis_name);
 
                 // description
                 coldef = new JET_COLUMNDEF
@@ -175,7 +162,7 @@ namespace WikiDbTest
                     grbit = ColumndefGrbit.ColumnNotNULL,
                     cp = JET_CP.Unicode
                 };
-                Api.JetAddColumn (this.session, this.wikisTable, "description", coldef, null, 0, out this.wikis_description);
+                Api.JetAddColumn (this.session, wikisTable, "description", coldef, null, 0, out this.wikis_description);
 
                 // Indices.
                 // name
@@ -186,10 +173,10 @@ namespace WikiDbTest
                                                   cbKey = "+name\0".Length + 1,
                                                   grbit = CreateIndexGrbit.IndexPrimary | CreateIndexGrbit.IndexUnique | CreateIndexGrbit.IndexDisallowNull,
                                               };
-                Api.JetCreateIndex2(this.session, this.wikisTable, new [] { indexcreate }, 1);
+                Api.JetCreateIndex2(this.session, wikisTable, new [] { indexcreate }, 1);
 
                 // Create the wikiPages table.
-                Api.JetCreateTable (this.session, this.database, "wikiPages", 0, 100, out this.wikiPagesTable);
+                Api.JetCreateTable (this.session, this.database, "wikiPages", 0, 100, out wikiPagesTable);
 
                 // Columns.
                 // id
@@ -198,16 +185,15 @@ namespace WikiDbTest
                     coltyp = JET_coltyp.Long,
                     grbit = ColumndefGrbit.ColumnAutoincrement
                 };
-                Api.JetAddColumn (this.session, this.wikiPagesTable, "id", coldef, null, 0, out this.wikipages_id);
+                Api.JetAddColumn (this.session, wikiPagesTable, "id", coldef, null, 0, out this.wikipages_id);
 
-                // wikiName
+                // wiki
                 coldef = new JET_COLUMNDEF
                 {
-                    coltyp = JET_coltyp.Text,
+                    coltyp = JET_coltyp.Long,
                     grbit = ColumndefGrbit.ColumnNotNULL | ColumndefGrbit.ColumnFixed,
-                    cp = JET_CP.Unicode
                 };
-                Api.JetAddColumn(this.session, this.wikiPagesTable, "wikiName", coldef, null, 0, out this.wikipages_wikiName);
+                Api.JetAddColumn(this.session, wikiPagesTable, "wiki", coldef, null, 0, out this.wikipages_wiki);
 
                 // pageName
                 coldef = new JET_COLUMNDEF
@@ -216,7 +202,7 @@ namespace WikiDbTest
                     grbit = ColumndefGrbit.ColumnNotNULL | ColumndefGrbit.ColumnFixed,
                     cp = JET_CP.Unicode
                 };
-                Api.JetAddColumn(this.session, this.wikiPagesTable, "pageName", coldef, null, 0, out this.wikipages_pageName);
+                Api.JetAddColumn(this.session, wikiPagesTable, "pageName", coldef, null, 0, out this.wikipages_pageName);
 
                 // pageClass
                 coldef = new JET_COLUMNDEF
@@ -225,7 +211,7 @@ namespace WikiDbTest
                     grbit = ColumndefGrbit.ColumnNotNULL,
                     cp = JET_CP.Unicode
                 };
-                Api.JetAddColumn(this.session, this.wikiPagesTable, "pageClass", coldef, null, 0, out this.wikipages_pageClass);
+                Api.JetAddColumn(this.session, wikiPagesTable, "pageClass", coldef, null, 0, out this.wikipages_pageClass);
 
                 // pageContents
                 coldef = new JET_COLUMNDEF
@@ -234,7 +220,7 @@ namespace WikiDbTest
                     grbit = ColumndefGrbit.ColumnMaybeNull,
                     cp = JET_CP.Unicode
                 };
-                Api.JetAddColumn(this.session, this.wikiPagesTable, "pageContents", coldef, null, 0, out this.wikipages_pageContents);
+                Api.JetAddColumn(this.session, wikiPagesTable, "pageContents", coldef, null, 0, out this.wikipages_pageContents);
 
                 // lastUpdated
                 coldef = new JET_COLUMNDEF
@@ -243,18 +229,18 @@ namespace WikiDbTest
                     grbit = ColumndefGrbit.ColumnNotNULL,
                     cp = JET_CP.Unicode
                 };
-                Api.JetAddColumn(this.session, this.wikiPagesTable, "lastUpdated", coldef, null, 0, out this.wikipages_lastUpdated);
+                Api.JetAddColumn(this.session, wikiPagesTable, "lastUpdated", coldef, null, 0, out this.wikipages_lastUpdated);
 
                 // Indices.
-                // wikiName + pageName
+                // wiki + pageName
                 indexcreate = new JET_INDEXCREATE
                 {
                     szIndexName = "byWikiAndPage",
-                    szKey = "+wikiName\0+pageName\0",
-                    cbKey = "+wikiName\0+pageName\0".Length + 1,
+                    szKey = "+wiki\0+pageName\0",
+                    cbKey = "+wiki\0+pageName\0".Length + 1,
                     grbit = CreateIndexGrbit.IndexPrimary | CreateIndexGrbit.IndexUnique | CreateIndexGrbit.IndexDisallowNull
                 };
-                Api.JetCreateIndex2 (this.session, this.wikiPagesTable, new[] { indexcreate }, 1);
+                Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
 
                 // lastUpdated
                 indexcreate = new JET_INDEXCREATE
@@ -264,7 +250,7 @@ namespace WikiDbTest
                     cbKey = "-lastUpdated\0".Length + 1,
                     grbit = CreateIndexGrbit.None
                 };
-                Api.JetCreateIndex2 (this.session, this.wikiPagesTable, new[] { indexcreate }, 1);
+                Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
 
                 // for full-test sear: pageContents
                 indexcreate = new JET_INDEXCREATE
@@ -274,68 +260,14 @@ namespace WikiDbTest
                     cbKey = "+pageContents\0".Length + 1,
                     grbit = CreateIndexGrbit.None
                 };
-                Api.JetCreateIndex2 (this.session, this.wikiPagesTable, new[] { indexcreate }, 1);
-
-                // Create the backlinks table.
-                Api.JetCreateTable (this.session, this.database, "backlinks", 0, 100, out this.backlinksTable);
-
-                // Columns.
-                // id
-                coldef = new JET_COLUMNDEF
-                {
-                    coltyp = JET_coltyp.Long,
-                    grbit = ColumndefGrbit.ColumnAutoincrement
-                };
-                Api.JetAddColumn (this.session, this.backlinksTable, "id", coldef, null, 0, out this.backlinks_id);
-
-                // pageId
-                coldef = new JET_COLUMNDEF
-                {
-                    coltyp = JET_coltyp.Long
-                };
-                Api.JetAddColumn (this.session, this.backlinksTable, "pageId", coldef, null, 0, out this.backlinks_pageId);
-
-                // wikiName
-                coldef = new JET_COLUMNDEF
-                {
-                    coltyp = JET_coltyp.Text,
-                    grbit = ColumndefGrbit.ColumnNotNULL | ColumndefGrbit.ColumnFixed,
-                    cp = JET_CP.Unicode
-                };
-                Api.JetAddColumn (this.session, this.backlinksTable, "wikiName", coldef, null, 0, out this.backlinks_wikiName);
-
-                // pageName (multivalue)
-                coldef = new JET_COLUMNDEF
-                {
-                    coltyp = JET_coltyp.Text,
-                    grbit = ColumndefGrbit.ColumnNotNULL | ColumndefGrbit.ColumnMultiValued | ColumndefGrbit.ColumnTagged,
-                    cp = JET_CP.Unicode
-                };
-                Api.JetAddColumn (this.session, this.backlinksTable, "pageName", coldef, null, 0, out this.backlinks_pageName);
-
-                // Indices.
-                // pageId
-                indexcreate = new JET_INDEXCREATE
-                {
-                    szIndexName = "byPageId",
-                    szKey = "+pageId\0",
-                    cbKey = "+pageId\0".Length + 1,
-                    grbit = CreateIndexGrbit.IndexPrimary | CreateIndexGrbit.IndexUnique
-                };
-                Api.JetCreateIndex2 (this.session, this.backlinksTable, new[] { indexcreate }, 1);
-
-                // wikiname and pagename
-                indexcreate = new JET_INDEXCREATE
-                {
-                    szIndexName = "byWikiAndPage",
-                    szKey = "+wikiName\0+pageName\0",
-                    cbKey = "+wikiName\0+pageName\0".Length + 1,
-                    grbit = CreateIndexGrbit.None
-                };
-                Api.JetCreateIndex2 (this.session, this.backlinksTable, new[] { indexcreate }, 1);
+                Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
 
                 Api.JetCommitTransaction(this.session, CommitTransactionGrbit.LazyFlush);
             }
+
+            // Close the tables.
+            Api.JetCloseTable (this.session, wikiPagesTable);
+            Api.JetCloseTable (this.session, wikisTable);
         }
 
         #endregion
@@ -344,25 +276,108 @@ namespace WikiDbTest
         private readonly JET_SESID session;
         private readonly JET_DBID database;
 
-        private readonly JET_TABLEID wikisTable;
-        private readonly JET_TABLEID wikiPagesTable;
-        private readonly JET_TABLEID backlinksTable;
+        #region Column id fields
 
         private readonly JET_COLUMNID wikis_id;
         private readonly JET_COLUMNID wikis_name;
         private readonly JET_COLUMNID wikis_description;
 
         private readonly JET_COLUMNID wikipages_id;
-        private readonly JET_COLUMNID wikipages_wikiName;
+        private readonly JET_COLUMNID wikipages_wiki;
         private readonly JET_COLUMNID wikipages_pageName;
         private readonly JET_COLUMNID wikipages_pageClass;
         private readonly JET_COLUMNID wikipages_pageContents;
         private readonly JET_COLUMNID wikipages_lastUpdated;
 
-        private readonly JET_COLUMNID backlinks_id;
-        private readonly JET_COLUMNID backlinks_pageId;
-        private readonly JET_COLUMNID backlinks_wikiName;
-        private readonly JET_COLUMNID backlinks_pageName;
+        #endregion
+
+        // WIKI FUNCTIONS
+
+        // Enumerate the wikis currently in the database.
+        public IEnumerable<Wiki> GetWikis ()
+        {
+            throw new NotImplementedException();
+        }
+
+        // Create a new wiki, which includes creating its first (front) page.
+        public void CreateNewWiki (Wiki newWiki)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Rename a wiki.
+        public void RenameWiki (Wiki newNameAndDescription)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Delete a new wiki, including all of its pages.
+        public void DeleteWiki (int wikiId)
+        {
+            throw new NotImplementedException();
+        }
+
+        // WIKI PAGES FUNCTIONS
+
+        // Enumerate all wiki pages (by title and class).
+        public IEnumerable<WikiIndex> GetWikiIndex (int wikiId)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Fetch a single wiki page.
+        public WikiPage GetWikiPage (int wikiId, int id)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Create a wiki page.
+        public WikiPage CreateWikiPage (int wikiId, string title)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Save a wiki page.
+        public void SaveWikiPage (WikiPage page)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Delete a wiki page.
+        public void DeleteWikiPage (int wikiId, int id)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Check if a wiki page exists.
+        public bool CheckForPage (int wikiId, string title)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Search titles locally.
+        public IEnumerable<WikiIndex> SearchLocal (int wikiId, string search)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Search titles globally.
+        public IEnumerable<WikiIndex> SearchGlobal (string search)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Search full text.
+        public IEnumerable<WikiIndex> SearchFullText (int wikiId, string search)
+        {
+            throw new NotImplementedException();
+        }
+
+        // Dump all wiki pages (all data).
+        public IEnumerable<WikiPage> DumpPages (int wikiId)
+        {
+            throw new NotImplementedException();
+        }
 
         #region IDisposable Members
 
@@ -371,11 +386,6 @@ namespace WikiDbTest
             if (!this.disposed)
             {
                 // Run the cleanup routines.
-                // Close the tables.
-                Api.JetCloseTable(this.session, this.backlinksTable);
-                Api.JetCloseTable(this.session, this.wikiPagesTable);
-                Api.JetCloseTable(this.session, this.wikisTable);
-
                 // Terminate ESENT. This performs a clean shutdown.
                 Api.JetEndSession(this.session, EndSessionGrbit.None);
                 Api.JetTerm (this.instance);
