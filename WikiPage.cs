@@ -6,18 +6,8 @@ using System.Threading.Tasks;
 
 namespace WikiDbTest
 {
-    public class WikiPage
+    public class WikiPage : WikiIndex
     {
-        public int Id { get; set; }
-
-        public int Wiki { get; set; }
-
-        public string Name { get; set; }
-
-        public PageClass Class { get; set; }
-
         public string Contents { get; set; }
-
-        public DateTime LastUpdated { get; set; }
     }
 }

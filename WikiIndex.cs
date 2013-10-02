@@ -15,5 +15,7 @@ namespace WikiDbTest
         public string Name { get; set; }
 
         public PageClass Class { get; set; }
+
+        public DateTime LastUpdated { get; set; }
     }
 }

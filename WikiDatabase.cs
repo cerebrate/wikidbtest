@@ -328,13 +328,19 @@ namespace WikiDbTest
                     {
                         do
                         {
-                            Wiki wiki = new Wiki();
-                            wiki.Id = (int) Api.RetrieveColumnAsInt32 (this.session, table, wikis_id); // can't be null
-                            wiki.Name = Api.RetrieveColumnAsString (this.session, table, wikis_name, Encoding.Unicode);
-                            wiki.Description = Api.RetrieveColumnAsString (this.session,
-                                                                           table,
-                                                                           wikis_description,
-                                                                           Encoding.Unicode);
+                            Wiki wiki = new Wiki
+                                        {
+                                            Id = (int) Api.RetrieveColumnAsInt32 (this.session, table, this.wikis_id),
+                                            Name =
+                                                Api.RetrieveColumnAsString (this.session,
+                                                                            table,
+                                                                            this.wikis_name,
+                                                                            Encoding.Unicode),
+                                            Description = Api.RetrieveColumnAsString (this.session,
+                                                                                      table,
+                                                                                      this.wikis_description,
+                                                                                      Encoding.Unicode)
+                                        };
 
                             returnValue.Add(wiki);
 
@@ -372,10 +378,27 @@ namespace WikiDbTest
                             Api.SetColumn(this.session, table, this.wikis_description, newWiki.Description, Encoding.Unicode);
 
                             // Save the update.
-                            update.Save();
+                            update.SaveAndGotoBookmark();
                         }
 
-                        // TODO: make the first page.
+                        // Grab the ID for later use.
+                        newWiki.Id = (int) Api.RetrieveColumnAsInt32 (this.session, table, wikis_id);
+
+                        // Make the first page.
+                        using (var pages = new Table (this.session, this.database, "wikiPages", OpenTableGrbit.Updatable))
+                        {
+                            using (var pageUpdate = new Update (this.session, pages, JET_prep.Insert))
+                            {
+                                // We know there's nothing here, so.
+                                Api.SetColumn(this.session, pages, wikipages_wiki, newWiki.Id);
+                                Api.SetColumn(this.session, pages, wikipages_pageName, "Front Page", Encoding.Unicode);
+                                Api.SetColumn(this.session, pages, wikipages_pageClass, (int) PageClass.Cover);
+                                Api.SetColumn(this.session, pages, wikipages_pageContents, "These are some page contents.", Encoding.Unicode);
+                                Api.SetColumn(this.session, pages, wikipages_lastUpdated, DateTime.Now);
+
+                                pageUpdate.Save();
+                            }
+                        }
 
                         // Commit the transaction.
                         transaction.Commit(CommitTransactionGrbit.None);
@@ -439,7 +462,37 @@ namespace WikiDbTest
                         if (!found)
                             throw new ApplicationException (String.Format ("Wiki with id {0} was not found.", wikiId));
 
-                        // TODO: Having found the wiki record, we now delete all of its pages.
+                        // Having found the wiki record, we now delete all of its pages.
+                        using (
+                            var pages = new Table (this.session, this.database, "wikiPages", OpenTableGrbit.Updatable))
+                        {
+                            // Be on the primary index, which indexes wiki+pageName.
+                            Api.JetSetCurrentIndex(this.session, pages, null);
+
+                            // Make a key.
+                            Api.MakeKey (this.session, pages, wikiId, MakeKeyGrbit.NewKey | MakeKeyGrbit.FullColumnStartLimit);
+                            
+                            // We know there's always at least one record.
+                            // Seek to first record.
+                            if (Api.TrySeek (this.session, pages, SeekGrbit.SeekGE))
+                            {
+                                // We should now be on the first record from the target wiki. This record may not be in the index range.
+                                // We will now set the end of the index range, which will tell us if the range is empty.
+                                Api.MakeKey(this.session, pages, wikiId, MakeKeyGrbit.NewKey | MakeKeyGrbit.FullColumnEndLimit);
+
+                                if (Api.TrySetIndexRange (this.session,
+                                                          pages,
+                                                          SetIndexRangeGrbit.RangeUpperLimit |
+                                                          SetIndexRangeGrbit.RangeInclusive))
+                                {
+                                    // There are records in the range.  We can now iterate through the range.
+                                    do
+                                    {
+                                        Api.JetDelete(this.session, pages);
+                                    } while (Api.TryMoveNext (this.session, pages));
+                                }
+                            }
+                        }
 
                         // And then we delete the wiki record itself.
                         Api.JetDelete (this.session, table);
@@ -454,9 +507,15 @@ namespace WikiDbTest
         // WIKI PAGES FUNCTIONS
 
         // Enumerate all wiki pages (by title and class).
-        public IEnumerable<WikiIndex> GetWikiIndex (int wikiId)
+        public IEnumerable<WikiIndex> GetWikiIndexByTitle (int wikiId)
         {
             throw new NotImplementedException();
+        }
+
+        // Enumerate all wiki pages (by last updated time).
+        public IEnumerable<WikiIndex> GetWikiIndexByLastUpdated (int wikiId)
+        {
+            throw new NotImplementedException ();
         }
 
         // Get wiki page count.
