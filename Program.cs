@@ -49,6 +49,9 @@ namespace WikiDbTest
             var bazWiki = wb.GetWikis ().Single (w => w.Name == "baz");
             wb.CreateWikiPage (bazWiki.Id, "Fish");
 
+            // Enumerate the pages.
+            EnumerateWikiIndices (wb, fooWiki);
+
             // Pause.
             Console.WriteLine ("Pausing...");
             Console.ReadLine ();
@@ -64,6 +67,17 @@ namespace WikiDbTest
             var wikis = wb.GetWikis ();
             foreach (Wiki wiki in wikis)
                 Console.WriteLine (String.Format ("({0}) {1}: {2}", wiki.Id, wiki.Name, wiki.Description));
+
+            Console.WriteLine ();
+        }
+
+        private static void EnumerateWikiIndices (WikiDatabase wb, Wiki wiki)
+        {
+            Console.WriteLine ();
+
+            var pages = wb.GetWikiIndexByTitle(wiki.Id);
+            foreach (WikiIndex page in pages)
+                Console.WriteLine (String.Format ("{0}: {1} ({2}/{3})", page.Id, page.Name, page.Class, page.LastUpdated));
 
             Console.WriteLine ();
         }
