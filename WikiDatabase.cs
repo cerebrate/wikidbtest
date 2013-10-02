@@ -510,16 +510,104 @@ namespace WikiDbTest
 
         // WIKI PAGES FUNCTIONS
 
-        // Enumerate all wiki pages (by title and class).
-        public IEnumerable<WikiIndex> GetWikiIndexByTitle (int wikiId)
+        // Enumerate all wiki pages (using specified index).
+        private IEnumerable<WikiIndex> GetWikiIndex (int wikiId, string index)
         {
             lock (this.nonReentrancyLock)
             {
                 List<WikiIndex> returnValue = new List<WikiIndex> ();
 
+                // Initially, check to see if the wiki ID is valid.
+                using (var table = new Table (this.session, this.database, "wikis", OpenTableGrbit.ReadOnly))
+                {
+                    Api.JetSetCurrentIndex (this.session, table, "byId");
+
+                    Api.MakeKey (this.session, table, wikiId, MakeKeyGrbit.NewKey);
+                    bool found = Api.TrySeek (this.session, table, SeekGrbit.SeekEQ);
+
+                    if (!found)
+                        throw new ApplicationException ("Specified wiki ID not found.");
+                }
+
                 using (var pages = new Table (this.session, this.database, "wikiPages", OpenTableGrbit.Sequential | OpenTableGrbit.ReadOnly))
                 {
-                    // Be on the primary index, which indexes by wiki+pageName
+                    // Be on the specified index.
+                    Api.JetSetCurrentIndex (this.session, pages, index);
+
+                    // Find the start of the index range for this wiki.
+                    Api.MakeKey(this.session, pages, wikiId, MakeKeyGrbit.NewKey | MakeKeyGrbit.FullColumnStartLimit);
+                    if (Api.TrySeek (this.session, pages, SeekGrbit.SeekGE))
+                    {
+                        // We're on the first record.  Now set the end of the index range.
+                        Api.MakeKey(this.session, pages, wikiId, MakeKeyGrbit.NewKey | MakeKeyGrbit.FullColumnEndLimit);
+                        if (Api.TrySetIndexRange (this.session,
+                                                  pages,
+                                                  SetIndexRangeGrbit.RangeUpperLimit | SetIndexRangeGrbit.RangeInclusive))
+                        {
+                            // There are records in the range.  We now iterate through the range and
+                            // build WikiIndex objects.
+                            do
+                            {
+                                WikiIndex wikiIndex = new WikiIndex
+                                            {
+                                                Id = (int) Api.RetrieveColumnAsInt32(this.session, pages, wikipages_id),
+                                                Wiki = wikiId,
+                                                Name = Api.RetrieveColumnAsString(this.session, pages, wikipages_pageName, Encoding.Unicode),
+                                                Class = (PageClass) Api.RetrieveColumnAsInt32(this.session, pages, wikipages_pageClass),
+                                                LastUpdated = (DateTime) Api.RetrieveColumnAsDateTime(this.session, pages, wikipages_lastUpdated)
+                                            };
+
+                                returnValue.Add(wikiIndex);
+
+                            } while (Api.TryMoveNext(this.session, pages));
+                        }
+                    }
+                }
+
+                return returnValue.AsReadOnly ();
+            }
+        }
+
+        // Enumerate all wiki pages (by title and class).
+        public IEnumerable<WikiIndex> GetWikiIndexByTitle (int wikiId)
+        {
+            // Be on the primary index, which indexes by wiki+pageName.
+            return GetWikiIndex (wikiId, null);
+        }
+
+        // Enumerate all wiki pages (by last updated time).
+        public IEnumerable<WikiIndex> GetWikiIndexByLastUpdated (int wikiId)
+        {
+            // Be on the byLastUpdated index, which indexes by wiki+lastUpdated.
+            return GetWikiIndex (wikiId, "byLastUpdated");
+        }
+
+        // Get wiki page count.
+        public int GetWikiPageCount (int wikiId)
+        {
+            int count = 0;
+
+            lock (this.nonReentrancyLock)
+            {
+                // Initially, check to see if the wiki ID is valid.
+                using (var table = new Table (this.session, this.database, "wikis", OpenTableGrbit.ReadOnly))
+                {
+                    Api.JetSetCurrentIndex (this.session, table, "byId");
+
+                    Api.MakeKey (this.session, table, wikiId, MakeKeyGrbit.NewKey);
+                    bool found = Api.TrySeek (this.session, table, SeekGrbit.SeekEQ);
+
+                    if (!found)
+                        throw new ApplicationException ("Specified wiki ID not found.");
+                }
+
+                using (
+                    var pages = new Table (this.session,
+                                           this.database,
+                                           "wikiPages",
+                                           OpenTableGrbit.ReadOnly | OpenTableGrbit.Sequential))
+                {
+                    // Be on the specified index.
                     Api.JetSetCurrentIndex (this.session, pages, null);
 
                     // Find the start of the index range for this wiki.
@@ -536,36 +624,14 @@ namespace WikiDbTest
                             // build WikiIndex objects.
                             do
                             {
-                                WikiIndex index = new WikiIndex
-                                            {
-                                                Id = (int) Api.RetrieveColumnAsInt32(this.session, pages, wikipages_id),
-                                                Wiki = wikiId,
-                                                Name = Api.RetrieveColumnAsString(this.session, pages, wikipages_pageName, Encoding.Unicode),
-                                                Class = (PageClass) Api.RetrieveColumnAsInt32(this.session, pages, wikipages_pageClass),
-                                                LastUpdated = (DateTime) Api.RetrieveColumnAsDateTime(this.session, pages, wikipages_lastUpdated)
-                                            };
-
-                                returnValue.Add(index);
-
+                                count++;
                             } while (Api.TryMoveNext(this.session, pages));
                         }
                     }
                 }
 
-                return returnValue.AsReadOnly ();
+                return count;
             }
-        }
-
-        // Enumerate all wiki pages (by last updated time).
-        public IEnumerable<WikiIndex> GetWikiIndexByLastUpdated (int wikiId)
-        {
-            throw new NotImplementedException ();
-        }
-
-        // Get wiki page count.
-        public int GetWikiPageCount (int wikiId)
-        {
-            throw new NotImplementedException();   
         }
 
         // Fetch a single wiki page.
