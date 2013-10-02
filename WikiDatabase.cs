@@ -13,6 +13,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 using Microsoft.Isam.Esent.Interop;
@@ -277,7 +278,8 @@ namespace WikiDbTest
                     szIndexName = "byContents",
                     szKey = "+pageContents\0\0",
                     cbKey = "+pageContents\0\0".Length,
-                    grbit = CreateIndexGrbit.None
+                    grbit = CreateIndexGrbit.None,
+                    cbKeyMost = SystemParameters.KeyMost
                 };
                 Api.JetCreateIndex2 (this.session, wikiPagesTable, new[] { indexcreate }, 1);
 
@@ -310,7 +312,7 @@ namespace WikiDbTest
 
         #endregion
 
-        // WIKI FUNCTIONS
+        #region WIKI FUNCTIONS
 
         // Enumerate the wikis currently in the database.
         public IEnumerable<Wiki> GetWikis ()
@@ -504,6 +506,8 @@ namespace WikiDbTest
             }
         }
 
+        #endregion
+
         // WIKI PAGES FUNCTIONS
 
         // Enumerate all wiki pages (by title and class).
@@ -533,7 +537,62 @@ namespace WikiDbTest
         // Create a wiki page.
         public WikiPage CreateWikiPage (int wikiId, string title)
         {
-            throw new NotImplementedException();
+            lock (this.nonReentrancyLock)
+            {
+                using (var pages = new Table (this.session, this.database, "wikiPages", OpenTableGrbit.Updatable))
+                {
+                    using (var transaction = new Transaction (this.session))
+                    {
+                        // Initially, check to see if the wiki ID is valid.
+                        using (var table = new Table (this.session, this.database, "wikis", OpenTableGrbit.ReadOnly))
+                        {
+                            Api.JetSetCurrentIndex(this.session, table, "byId");
+
+                            Api.MakeKey(this.session, table, wikiId, MakeKeyGrbit.NewKey);
+                            bool found = Api.TrySeek (this.session, table, SeekGrbit.SeekEQ);
+
+                            if (!found)
+                                throw new ApplicationException("Specified wiki ID not found.");
+                        }
+
+                        // Check to see if a page by this name already exists.
+                        Api.JetSetCurrentIndex(this.session, pages, null);
+
+                        Api.MakeKey(this.session, pages, wikiId, MakeKeyGrbit.NewKey);
+                        Api.MakeKey(this.session, pages, title, Encoding.Unicode, MakeKeyGrbit.None);
+
+                        bool exists = Api.TrySeek (this.session, pages, SeekGrbit.SeekEQ);
+
+                        if (exists)
+                            throw new ApplicationException(String.Format ("A page {0} in this wiki already exists.", title));
+
+                        // Construct a blank page.
+                        WikiPage page = new WikiPage()
+                                        {
+                                            Wiki = wikiId,
+                                            Name = title,
+                                            Class = PageClass.Entry,
+                                            LastUpdated = DateTime.Now
+                                        };
+
+                        using (var update = new Update (this.session, pages, JET_prep.Insert))
+                        {
+                            Api.SetColumn(this.session, pages, wikipages_wiki, page.Wiki);
+                            Api.SetColumn(this.session, pages, wikipages_pageName, page.Name, Encoding.Unicode);
+                            Api.SetColumn(this.session, pages, wikipages_pageClass, (int) page.Class);
+                            Api.SetColumn(this.session, pages, wikipages_lastUpdated, page.LastUpdated);
+
+                            update.SaveAndGotoBookmark();
+                        }
+
+                        page.Id = (int) Api.RetrieveColumnAsInt32 (this.session, pages, wikipages_id); // not null
+
+                        transaction.Commit(CommitTransactionGrbit.None);
+
+                        return page;
+                    }
+                }
+            }
         }
 
         // Save a wiki page.
@@ -562,12 +621,6 @@ namespace WikiDbTest
 
         // Search titles globally.
         public IEnumerable<WikiIndex> SearchGlobal (string search)
-        {
-            throw new NotImplementedException();
-        }
-
-        // Search full text.
-        public IEnumerable<WikiIndex> SearchFullText (int wikiId, string search)
         {
             throw new NotImplementedException();
         }

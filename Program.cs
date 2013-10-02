@@ -39,6 +39,16 @@ namespace WikiDbTest
             // Enumerate the wikis.
             EnumerateWikis(wb);
 
+            // Create some pages in foowiki.
+            Console.WriteLine("Creating some test pages...");
+            wb.CreateWikiPage (fooWiki.Id, "Monkey");
+            wb.CreateWikiPage (fooWiki.Id, "Hat");
+            wb.CreateWikiPage (fooWiki.Id, "Fish");
+
+            // Create elsewhere
+            var bazWiki = wb.GetWikis ().Single (w => w.Name == "baz");
+            wb.CreateWikiPage (bazWiki.Id, "Fish");
+
             // Pause.
             Console.WriteLine ("Pausing...");
             Console.ReadLine ();
